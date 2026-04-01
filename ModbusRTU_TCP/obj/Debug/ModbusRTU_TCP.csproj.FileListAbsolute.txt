@@ -1,0 +1,10 @@
+C:\Visio project\温湿度监控上位机\bin\Debug\ModbusRTU_TCP.exe.config
+C:\Visio project\温湿度监控上位机\bin\Debug\ModbusRTU_TCP.exe
+C:\Visio project\温湿度监控上位机\bin\Debug\ModbusRTU_TCP.pdb
+C:\Visio project\温湿度监控上位机\obj\Debug\ModbusRTU_TCP.csproj.AssemblyReference.cache
+C:\Visio project\温湿度监控上位机\obj\Debug\ModbusRTU_TCP.Form1.resources
+C:\Visio project\温湿度监控上位机\obj\Debug\ModbusRTU_TCP.Properties.Resources.resources
+C:\Visio project\温湿度监控上位机\obj\Debug\ModbusRTU_TCP.csproj.GenerateResource.cache
+C:\Visio project\温湿度监控上位机\obj\Debug\ModbusRTU_TCP.csproj.CoreCompileInputs.cache
+C:\Visio project\温湿度监控上位机\obj\Debug\ModbusRTU_TCP.exe
+C:\Visio project\温湿度监控上位机\obj\Debug\ModbusRTU_TCP.pdb
