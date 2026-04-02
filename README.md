@@ -17,7 +17,6 @@
 
 - ## 快速部署
 1. 克隆项目
-git clone https://github.com/xxx/modbus-serial-debug-tool.git
 
 2. 用VS2022打开项目文件内的.sln解决方案文件
    
