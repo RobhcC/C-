@@ -89,7 +89,7 @@ namespace ModbusRTU_TCP
                 SetStatusCellColor(statusCell, status);
             }
             
-            // 调整行高
+            // 自适应调整行高
             if (dgvModbus.Rows.Count > 0)
             {
                 int availableHeight = dgvModbus.Height - dgvModbus.ColumnHeadersHeight;
@@ -403,6 +403,7 @@ namespace ModbusRTU_TCP
             }
         }
 
+        //TCP连接
         private async Task ConnectTcpAsync(string ip, int port)
         {
             bool success = false;
