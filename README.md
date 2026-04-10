@@ -77,7 +77,7 @@ ModbusRTU_TCP/
 
 1. **克隆仓库**
    ```bash
-   git clone https://github.com/RobhcC/ModbusRTU_TCP.git
+   git clone https://github.com/RobhcC/ModbusRTU-TCP.git
    ```
 
 2. **打开项目**
