@@ -138,7 +138,7 @@ namespace ModbusRTU_TCP
             // 
             // btnCloseSerial
             // 
-            this.btnCloseSerial.Location = new System.Drawing.Point(189, 12);
+            this.btnCloseSerial.Location = new System.Drawing.Point(207, 12);
             this.btnCloseSerial.Name = "btnCloseSerial";
             this.btnCloseSerial.Size = new System.Drawing.Size(75, 26);
             this.btnCloseSerial.TabIndex = 5;
@@ -158,7 +158,7 @@ namespace ModbusRTU_TCP
             // 
             // btnOpenSerial
             // 
-            this.btnOpenSerial.Location = new System.Drawing.Point(87, 12);
+            this.btnOpenSerial.Location = new System.Drawing.Point(105, 12);
             this.btnOpenSerial.Name = "btnOpenSerial";
             this.btnOpenSerial.Size = new System.Drawing.Size(75, 26);
             this.btnOpenSerial.TabIndex = 4;
@@ -168,7 +168,7 @@ namespace ModbusRTU_TCP
             // 
             // btnClearLog
             // 
-            this.btnClearLog.Location = new System.Drawing.Point(291, 12);
+            this.btnClearLog.Location = new System.Drawing.Point(300, 12);
             this.btnClearLog.Name = "btnClearLog";
             this.btnClearLog.Size = new System.Drawing.Size(85, 26);
             this.btnClearLog.TabIndex = 4;
