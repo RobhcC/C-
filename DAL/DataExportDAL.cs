@@ -8,19 +8,32 @@ using ModbusRTU_TCP.Model;
 
 namespace ModbusRTU_TCP.DAL
 {
-    // 数据导出数据访问层 - 负责数据的文件导出操作
-    public class DataExportDAL
+    public class DataExportDAL : IDisposable
     {
-        // 历史记录最大保存条数
         private const int MaxRecordCount = 1000;
+        private const string DbDirectory = @"D:\SQLiteData";
+        private const string DbFileName = "ModbusRTU_TCP.db";
         private readonly string _dbFilePath;
         private readonly string _connectionString;
         private readonly object _dbLock = new object();
+        private bool _disposed = false;
 
         public DataExportDAL()
         {
-            _dbFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "history.db");
-            _connectionString = $"Data Source={_dbFilePath};Version=3;";
+            try
+            {
+                if (!Directory.Exists(DbDirectory))
+                {
+                    Directory.CreateDirectory(DbDirectory);
+                }
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException($"无法创建数据库目录 {DbDirectory}：{ex.Message}", ex);
+            }
+
+            _dbFilePath = Path.Combine(DbDirectory, DbFileName);
+            _connectionString = $"Data Source={_dbFilePath};Version=3;Pooling=true;Max Pool Size=10;";
             InitializeDatabase();
         }
 
@@ -28,34 +41,54 @@ namespace ModbusRTU_TCP.DAL
         {
             lock (_dbLock)
             {
-                if (!File.Exists(_dbFilePath))
+                try
                 {
-                    SQLiteConnection.CreateFile(_dbFilePath);
-                }
-
-                using (SQLiteConnection conn = new SQLiteConnection(_connectionString))
-                {
-                    conn.Open();
-                    const string createSql = @"
-                    CREATE TABLE IF NOT EXISTS DataRecords (
-                        Id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        CollectTime TEXT NOT NULL,
-                        Temperature REAL NOT NULL,
-                        Humidity REAL NOT NULL,
-                        Status TEXT NOT NULL
-                    );";
-                    using (SQLiteCommand cmd = new SQLiteCommand(createSql, conn))
+                    if (!File.Exists(_dbFilePath))
                     {
-                        cmd.ExecuteNonQuery();
+                        SQLiteConnection.CreateFile(_dbFilePath);
                     }
+
+                    using (SQLiteConnection conn = new SQLiteConnection(_connectionString))
+                    {
+                        conn.Open();
+                        const string createSql = @"
+                        CREATE TABLE IF NOT EXISTS ModbusDataRecords (
+                            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            CollectTime TEXT NOT NULL,
+                            Temperature REAL NOT NULL,
+                            Humidity REAL NOT NULL,
+                            Status TEXT NOT NULL
+                        );";
+                        using (SQLiteCommand cmd = new SQLiteCommand(createSql, conn))
+                        {
+                            cmd.ExecuteNonQuery();
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    throw new InvalidOperationException($"数据库初始化失败：{ex.Message}", ex);
                 }
             }
         }
 
-        // Create
+        public event Action<string> OnDbLog;
+
+        private void LogDb(string msg)
+        {
+            if (OnDbLog != null)
+            {
+                OnDbLog(msg);
+            }
+        }
+
         public bool SaveRecordToSqlite(DataRecord record)
         {
-            if (record == null) return false;
+            if (record == null)
+            {
+                LogDb("【数据库写入失败】记录为空");
+                return false;
+            }
 
             try
             {
@@ -65,7 +98,7 @@ namespace ModbusRTU_TCP.DAL
                     {
                         conn.Open();
                         const string insertSql = @"
-                        INSERT INTO DataRecords (CollectTime, Temperature, Humidity, Status)
+                        INSERT INTO ModbusDataRecords (CollectTime, Temperature, Humidity, Status)
                         VALUES (@CollectTime, @Temperature, @Humidity, @Status);";
 
                         using (SQLiteCommand cmd = new SQLiteCommand(insertSql, conn))
@@ -79,15 +112,16 @@ namespace ModbusRTU_TCP.DAL
                         }
                     }
                 }
+                LogDb($"【数据库写入成功】ID：{record.Id}，温度：{record.Temperature:0.0}℃，湿度：{record.Humidity:0.0}%");
                 return true;
             }
-            catch
+            catch (Exception ex)
             {
+                LogDb($"【数据库写入失败】{ex.Message}");
                 return false;
             }
         }
 
-        // Read
         public List<DataRecord> GetAllRecordsFromSqlite()
         {
             var result = new List<DataRecord>();
@@ -98,7 +132,7 @@ namespace ModbusRTU_TCP.DAL
                     using (SQLiteConnection conn = new SQLiteConnection(_connectionString))
                     {
                         conn.Open();
-                        const string querySql = "SELECT Id, CollectTime, Temperature, Humidity, Status FROM DataRecords ORDER BY CollectTime DESC;";
+                        const string querySql = "SELECT Id, CollectTime, Temperature, Humidity, Status FROM ModbusDataRecords ORDER BY CollectTime DESC;";
                         using (SQLiteCommand cmd = new SQLiteCommand(querySql, conn))
                         using (SQLiteDataReader reader = cmd.ExecuteReader())
                         {
@@ -109,10 +143,11 @@ namespace ModbusRTU_TCP.DAL
                         }
                     }
                 }
+                LogDb($"【数据库查询成功】共 {result.Count} 条记录");
             }
-            catch
+            catch (Exception ex)
             {
-                // Keep silent and return existing results.
+                LogDb($"【数据库查询失败】{ex.Message}");
             }
 
             return result;
@@ -120,7 +155,11 @@ namespace ModbusRTU_TCP.DAL
 
         public DataRecord GetRecordById(long id)
         {
-            if (id <= 0) return null;
+            if (id <= 0)
+            {
+                LogDb("【数据库查询失败】ID无效");
+                return null;
+            }
 
             try
             {
@@ -129,7 +168,7 @@ namespace ModbusRTU_TCP.DAL
                     using (SQLiteConnection conn = new SQLiteConnection(_connectionString))
                     {
                         conn.Open();
-                        const string querySql = "SELECT Id, CollectTime, Temperature, Humidity, Status FROM DataRecords WHERE Id = @Id LIMIT 1;";
+                        const string querySql = "SELECT Id, CollectTime, Temperature, Humidity, Status FROM ModbusDataRecords WHERE Id = @Id LIMIT 1;";
                         using (SQLiteCommand cmd = new SQLiteCommand(querySql, conn))
                         {
                             cmd.Parameters.AddWithValue("@Id", id);
@@ -144,9 +183,9 @@ namespace ModbusRTU_TCP.DAL
                     }
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                return null;
+                LogDb($"【数据库查询失败】ID={id}，{ex.Message}");
             }
 
             return null;
@@ -155,7 +194,11 @@ namespace ModbusRTU_TCP.DAL
         public List<DataRecord> QueryRecordsByTimeRange(DateTime startTime, DateTime endTime)
         {
             var result = new List<DataRecord>();
-            if (startTime > endTime) return result;
+            if (startTime > endTime)
+            {
+                LogDb("【数据库查询失败】起始时间大于结束时间");
+                return result;
+            }
 
             try
             {
@@ -166,7 +209,7 @@ namespace ModbusRTU_TCP.DAL
                         conn.Open();
                         const string querySql = @"
                         SELECT Id, CollectTime, Temperature, Humidity, Status
-                        FROM DataRecords
+                        FROM ModbusDataRecords
                         WHERE CollectTime >= @StartTime AND CollectTime <= @EndTime
                         ORDER BY CollectTime DESC;";
 
@@ -184,19 +227,23 @@ namespace ModbusRTU_TCP.DAL
                         }
                     }
                 }
+                LogDb($"【数据库时间范围查询成功】{startTime:yyyy-MM-dd}~{endTime:yyyy-MM-dd}，共 {result.Count} 条");
             }
-            catch
+            catch (Exception ex)
             {
-                // Keep silent and return existing results.
+                LogDb($"【数据库时间范围查询失败】{ex.Message}");
             }
 
             return result;
         }
 
-        // Update
         public bool UpdateRecord(DataRecord record)
         {
-            if (record == null || record.Id <= 0) return false;
+            if (record == null || record.Id <= 0)
+            {
+                LogDb("【数据库修改失败】记录无效");
+                return false;
+            }
 
             try
             {
@@ -206,7 +253,7 @@ namespace ModbusRTU_TCP.DAL
                     {
                         conn.Open();
                         const string updateSql = @"
-                        UPDATE DataRecords
+                        UPDATE ModbusDataRecords
                         SET CollectTime = @CollectTime, Temperature = @Temperature, Humidity = @Humidity, Status = @Status
                         WHERE Id = @Id;";
 
@@ -217,21 +264,35 @@ namespace ModbusRTU_TCP.DAL
                             cmd.Parameters.AddWithValue("@Humidity", record.Humidity);
                             cmd.Parameters.AddWithValue("@Status", record.Status ?? "正常");
                             cmd.Parameters.AddWithValue("@Id", record.Id);
-                            return cmd.ExecuteNonQuery() > 0;
+                            int affected = cmd.ExecuteNonQuery();
+                            if (affected > 0)
+                            {
+                                LogDb($"【数据库修改成功】ID：{record.Id}");
+                                return true;
+                            }
+                            else
+                            {
+                                LogDb($"【数据库修改失败】未找到ID={record.Id}的记录");
+                                return false;
+                            }
                         }
                     }
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                LogDb($"【数据库修改失败】{ex.Message}");
                 return false;
             }
         }
 
-        // Delete
         public bool DeleteRecordById(long id)
         {
-            if (id <= 0) return false;
+            if (id <= 0)
+            {
+                LogDb("【数据库删除失败】ID无效");
+                return false;
+            }
 
             try
             {
@@ -240,24 +301,39 @@ namespace ModbusRTU_TCP.DAL
                     using (SQLiteConnection conn = new SQLiteConnection(_connectionString))
                     {
                         conn.Open();
-                        const string deleteSql = "DELETE FROM DataRecords WHERE Id = @Id;";
+                        const string deleteSql = "DELETE FROM ModbusDataRecords WHERE Id = @Id;";
                         using (SQLiteCommand cmd = new SQLiteCommand(deleteSql, conn))
                         {
                             cmd.Parameters.AddWithValue("@Id", id);
-                            return cmd.ExecuteNonQuery() > 0;
+                            int affected = cmd.ExecuteNonQuery();
+                            if (affected > 0)
+                            {
+                                LogDb($"【数据库删除成功】ID：{id}");
+                                return true;
+                            }
+                            else
+                            {
+                                LogDb($"【数据库删除失败】未找到ID={id}的记录");
+                                return false;
+                            }
                         }
                     }
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                LogDb($"【数据库删除失败】{ex.Message}");
                 return false;
             }
         }
 
         public int DeleteRecordsByTimeRange(DateTime startTime, DateTime endTime)
         {
-            if (startTime > endTime) return 0;
+            if (startTime > endTime)
+            {
+                LogDb("【数据库删除失败】起始时间大于结束时间");
+                return 0;
+            }
 
             try
             {
@@ -267,20 +343,23 @@ namespace ModbusRTU_TCP.DAL
                     {
                         conn.Open();
                         const string deleteSql = @"
-                        DELETE FROM DataRecords
+                        DELETE FROM ModbusDataRecords
                         WHERE CollectTime >= @StartTime AND CollectTime <= @EndTime;";
 
                         using (SQLiteCommand cmd = new SQLiteCommand(deleteSql, conn))
                         {
                             cmd.Parameters.AddWithValue("@StartTime", startTime.ToString("yyyy-MM-dd HH:mm:ss"));
                             cmd.Parameters.AddWithValue("@EndTime", endTime.ToString("yyyy-MM-dd HH:mm:ss"));
-                            return cmd.ExecuteNonQuery();
+                            int affected = cmd.ExecuteNonQuery();
+                            LogDb($"【数据库时间范围删除成功】删除 {affected} 条记录");
+                            return affected;
                         }
                     }
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                LogDb($"【数据库时间范围删除失败】{ex.Message}");
                 return 0;
             }
         }
@@ -294,16 +373,19 @@ namespace ModbusRTU_TCP.DAL
                     using (SQLiteConnection conn = new SQLiteConnection(_connectionString))
                     {
                         conn.Open();
-                        const string clearSql = "DELETE FROM DataRecords;";
+                        const string clearSql = "DELETE FROM ModbusDataRecords;";
                         using (SQLiteCommand cmd = new SQLiteCommand(clearSql, conn))
                         {
-                            return cmd.ExecuteNonQuery();
+                            int affected = cmd.ExecuteNonQuery();
+                            LogDb($"【数据库清空成功】删除 {affected} 条记录");
+                            return affected;
                         }
                     }
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                LogDb($"【数据库清空失败】{ex.Message}");
                 return 0;
             }
         }
@@ -323,17 +405,16 @@ namespace ModbusRTU_TCP.DAL
             };
         }
 
-        // 导出数据到TXT文本文件（异步）
         public async Task<bool> ExportToTxtAsync(List<DataRecord> records, string filePath)
         {
             try
             {
                 using (StreamWriter sw = new StreamWriter(filePath, false, Encoding.UTF8))
                 {
-                    await sw.WriteLineAsync("===== 温湿度采集历史记录 =====");
+                    await sw.WriteLineAsync("===== ModbusRTU_TCP 温湿度采集历史记录 =====");
                     await sw.WriteLineAsync($"导出时间：{DateTime.Now:yyyy-MM-dd HH:mm:ss}");
                     await sw.WriteLineAsync($"记录总数：{records.Count}");
-                    await sw.WriteLineAsync("==============================");
+                    await sw.WriteLineAsync("==============================================");
                     
                     foreach (var record in records)
                     {
@@ -341,18 +422,19 @@ namespace ModbusRTU_TCP.DAL
                         await sw.WriteLineAsync($"温度：{record.Temperature:0.0} ℃");
                         await sw.WriteLineAsync($"湿度：{record.Humidity:0.0} %");
                         await sw.WriteLineAsync($"设备状态：{record.Status}");
-                        await sw.WriteLineAsync("------------------------------");
+                        await sw.WriteLineAsync("----------------------------------------------");
                     }
                 }
+                LogDb($"【导出TXT成功】路径：{filePath}，共 {records.Count} 条");
                 return true;
             }
-            catch
+            catch (Exception ex)
             {
+                LogDb($"【导出TXT失败】{ex.Message}");
                 return false;
             }
         }
 
-        // 导出数据到CSV表格文件（异步）
         public async Task<bool> ExportToCsvAsync(List<DataRecord> records, string filePath)
         {
             try
@@ -366,18 +448,40 @@ namespace ModbusRTU_TCP.DAL
                         await sw.WriteLineAsync($"{record.CollectTime:yyyy-MM-dd HH:mm:ss},{record.Temperature:0.0},{record.Humidity:0.0},{record.Status}");
                     }
                 }
+                LogDb($"【导出CSV成功】路径：{filePath}，共 {records.Count} 条");
                 return true;
             }
-            catch
+            catch (Exception ex)
             {
+                LogDb($"【导出CSV失败】{ex.Message}");
                 return false;
             }
         }
 
-        // 获取历史记录最大保存条数
         public int GetMaxRecordCount()
         {
             return MaxRecordCount;
+        }
+
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (_disposed) return;
+            if (disposing)
+            {
+                SQLiteConnection.ClearAllPools();
+            }
+            _disposed = true;
+        }
+
+        ~DataExportDAL()
+        {
+            Dispose(false);
         }
     }
 }

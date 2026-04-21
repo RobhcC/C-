@@ -15,8 +15,31 @@ namespace ModbusRTU_TCP.BLL
         Online       // 在线
     }
 
+    // Modbus异常类型枚举
+    public enum ModbusExceptionType
+    {
+        None,                   // 无异常
+        BusinessException,      // 业务异常（Modbus协议异常码）
+        CommunicationException  // 通信异常（超时/断连）
+    }
+
+    // Modbus异常信息类 - 封装异常类型、异常码和描述
+    public class ModbusExceptionInfo
+    {
+        public ModbusExceptionType ExceptionType { get; set; }
+        public byte ExceptionCode { get; set; }
+        public string Message { get; set; }
+
+        public ModbusExceptionInfo(ModbusExceptionType type, byte code, string message)
+        {
+            ExceptionType = type;
+            ExceptionCode = code;
+            Message = message;
+        }
+    }
+
     // Modbus业务逻辑层 - 负责Modbus通信的核心业务逻辑处理
-    // 包括串口通信、TCP通信、数据解析、超时重发、批量读写等功能
+    // 包括串口通信、TCP通信、数据解析、超时重发、批量读写、指数退避重连、异常分类等功能
     public class ModbusBLL : IDisposable
     {
         #region 常量配置
@@ -31,6 +54,10 @@ namespace ModbusRTU_TCP.BLL
         // TCP配置
         private const int TCP_TIMEOUT = 5000;              // TCP超时时间(毫秒)
         private const int TCP_BUFFER_SIZE = 1024;          // TCP缓冲区大小
+
+        // 指数退避重连配置
+        private const int EXPONENTIAL_BACKOFF_BASE_MS = 1000;   // 基础等待时间(毫秒)
+        private const int EXPONENTIAL_BACKOFF_MAX_MS = 30000;   // 最大等待时间(毫秒)
 
         #endregion
 
@@ -51,13 +78,21 @@ namespace ModbusRTU_TCP.BLL
         // 历史数据记录列表
         private List<DataRecord> historyRecords = new List<DataRecord>();
         // 数据导出DAL对象
-        private DataExportDAL dataExportDAL = new DataExportDAL();
+        private DataExportDAL dataExportDAL;
         // 当前从站地址（默认1）
         private byte _slaveAddress = 0x01;
         // 当前读取的起始地址（用于解析响应时确定数据对应的寄存器）
         private ushort _currentStartAddr = 0x0000;
         // 资源释放标记
         private bool _disposed = false;
+        // 最近一次Modbus异常信息
+        private ModbusExceptionInfo _lastException = null;
+        // 指数退避重连定时器
+        private System.Threading.Timer _reconnectTimer = null;
+        // 当前重连尝试次数
+        private int _reconnectAttempt = 0;
+        // 是否正在重连中
+        private bool _isReconnecting = false;
 
         #endregion
 
@@ -65,23 +100,31 @@ namespace ModbusRTU_TCP.BLL
         
         // 日志添加事件 - 当有新日志需要显示时触发
         public event Action<string> OnLogAdded;
-        
         // 数据更新事件 - 当成功解析数据后触发
         public event Action<double, double, string, System.Drawing.Color> OnDataUpdated;
-        
         // 数据清除事件 - 当需要清除显示数据时触发
         public event Action OnDataCleared;
-        
         // 数据接收完成事件 - 当成功接收到有效数据时触发
         public event Action OnDataReceived;
-        
         // 批量数据更新事件 - 当批量读取数据成功时触发
-        // 参数：寄存器起始地址, 寄存器值数组
         public event Action<ushort, ushort[]> OnBatchDataReceived;
-        
         // 写入完成事件 - 当批量写入成功时触发
         public event Action<ushort, ushort> OnWriteCompleted;
+        // Modbus异常事件 - 当发生业务异常或通信异常时触发
+        public event Action<ModbusExceptionInfo> OnModbusException;
+        // 重连尝试事件 - 当指数退避重连尝试时触发
+        public event Action<int> OnReconnectAttempt;
         
+        #endregion
+
+        #region 构造函数
+
+        public ModbusBLL()
+        {
+            dataExportDAL = new DataExportDAL();
+            dataExportDAL.OnDbLog += (msg) => AddLog(msg);
+        }
+
         #endregion
 
         #region 公共属性
@@ -167,6 +210,18 @@ namespace ModbusRTU_TCP.BLL
         public int MaxWriteRegisterCount
         {
             get { return MAX_WRITE_REGISTER_COUNT; }
+        }
+
+        // 获取最近一次Modbus异常信息
+        public ModbusExceptionInfo LastException
+        {
+            get { return _lastException; }
+        }
+
+        // 获取是否正在重连中
+        public bool IsReconnecting
+        {
+            get { return _isReconnecting; }
         }
         
         #endregion
@@ -604,7 +659,6 @@ namespace ModbusRTU_TCP.BLL
 
             byte functionCode = (protocolIndex == 0) ? data[1] : data[0];
             
-            // 检查是否为异常响应（功能码最高位为1）
             if ((functionCode & 0x80) != 0)
             {
                 int minExceptionLength = (protocolIndex == 0) ? 3 : 2;
@@ -616,7 +670,14 @@ namespace ModbusRTU_TCP.BLL
                 }
                 byte exceptionCode = (protocolIndex == 0) ? data[2] : data[1];
                 string errorMsg = GetExceptionMessage(exceptionCode);
-                AddLog($"【异常响应】功能码：0x{functionCode:X2}，异常码：0x{exceptionCode:X2}，{errorMsg}");
+                AddLog($"【业务异常】功能码：0x{functionCode:X2}，异常码：0x{exceptionCode:X2}，{errorMsg}");
+
+                _lastException = new ModbusExceptionInfo(ModbusExceptionType.BusinessException, exceptionCode, errorMsg);
+                if (OnModbusException != null)
+                {
+                    OnModbusException(_lastException);
+                }
+
                 ClearData();
                 return;
             }
@@ -875,6 +936,7 @@ namespace ModbusRTU_TCP.BLL
             _retryCount = 0;
             _canSend = true;
             _deviceStatus = DeviceStatus.Online;
+            _lastException = null;
         }
 
         // 设置设备离线状态
@@ -888,6 +950,81 @@ namespace ModbusRTU_TCP.BLL
         public void StopRetry()
         {
             _retryCount = 0;
+        }
+
+        // 触发通信异常（供外部调用）
+        public void TriggerCommunicationException(string message)
+        {
+            _lastException = new ModbusExceptionInfo(ModbusExceptionType.CommunicationException, 0, message);
+            AddLog($"【通信异常】{message}");
+            if (OnModbusException != null)
+            {
+                OnModbusException(_lastException);
+            }
+        }
+
+        // 计算指数退避延迟时间（毫秒）
+        public int GetExponentialBackoffDelay(int attempt)
+        {
+            int delay = EXPONENTIAL_BACKOFF_BASE_MS * (int)Math.Pow(2, attempt);
+            return Math.Min(delay, EXPONENTIAL_BACKOFF_MAX_MS);
+        }
+
+        // 启动指数退避重连
+        public void StartExponentialReconnect(Action reconnectAction)
+        {
+            if (_isReconnecting) return;
+            _isReconnecting = true;
+            _reconnectAttempt = 0;
+
+            StopExponentialReconnect();
+
+            _reconnectTimer = new System.Threading.Timer(_ =>
+            {
+                try
+                {
+                    _reconnectAttempt++;
+                    int delay = GetExponentialBackoffDelay(_reconnectAttempt - 1);
+                    AddLog($"【指数退避重连】第{_reconnectAttempt}次尝试，等待{delay}ms后重连...");
+                    if (OnReconnectAttempt != null)
+                    {
+                        OnReconnectAttempt(_reconnectAttempt);
+                    }
+
+                    System.Threading.Thread.Sleep(delay);
+
+                    reconnectAction();
+                }
+                catch (Exception ex)
+                {
+                    AddLog($"【指数退避重连异常】{ex.Message}");
+                }
+            }, null, 0, System.Threading.Timeout.Infinite);
+        }
+
+        // 停止指数退避重连
+        public void StopExponentialReconnect()
+        {
+            if (_reconnectTimer != null)
+            {
+                _reconnectTimer.Dispose();
+                _reconnectTimer = null;
+            }
+            _isReconnecting = false;
+            _reconnectAttempt = 0;
+        }
+
+        // 解绑所有事件订阅（防止内存泄漏）
+        public void UnsubscribeAllEvents()
+        {
+            OnLogAdded = null;
+            OnDataUpdated = null;
+            OnDataCleared = null;
+            OnDataReceived = null;
+            OnBatchDataReceived = null;
+            OnWriteCompleted = null;
+            OnModbusException = null;
+            OnReconnectAttempt = null;
         }
         
         #endregion
@@ -970,21 +1107,23 @@ namespace ModbusRTU_TCP.BLL
         #endregion
 
         #region IDisposable 资源释放
-        /// 释放资源
+
+        // 释放资源
         public void Dispose()
         {
             Dispose(true);
             GC.SuppressFinalize(this);
         }
-        /// 释放资源的核心方法
-        /// <param name="disposing">是否释放托管资源</param>
+
+        // 释放资源的核心方法
         protected virtual void Dispose(bool disposing)
         {
             if (_disposed) return;
 
             if (disposing)
             {
-                // 释放托管资源
+                StopExponentialReconnect();
+
                 if (serialPort != null)
                 {
                     if (serialPort.IsOpen)
@@ -1004,9 +1143,11 @@ namespace ModbusRTU_TCP.BLL
                 }
                 if (dataExportDAL != null)
                 {
+                    dataExportDAL.Dispose();
                     dataExportDAL = null;
                 }
 
+                UnsubscribeAllEvents();
                 historyRecords?.Clear();
             }
 

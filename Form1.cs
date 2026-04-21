@@ -11,6 +11,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using ModbusRTU_TCP.BLL;
 using ModbusRTU_TCP.Model;
+using ModbusRTU_TCP.DAL;
 
 namespace ModbusRTU_TCP
 {
@@ -35,17 +36,49 @@ namespace ModbusRTU_TCP
             timerAutoSend.Tick += TimerAutoSend_Tick;
         }
 
-        // 初始化BLL层事件订阅
         private void InitModbusBllEvents()
         {
             modbusBll.OnLogAdded += AddLog;
             modbusBll.OnDataUpdated += UpdateModbusTable;
             modbusBll.OnDataCleared += ClearModbusTable;
             modbusBll.OnDataReceived += OnDataReceived;
-            // 订阅批量数据接收事件
             modbusBll.OnBatchDataReceived += OnBatchDataReceived;
-            // 订阅写入完成事件
             modbusBll.OnWriteCompleted += OnWriteCompleted;
+            modbusBll.OnModbusException += OnModbusException;
+            modbusBll.OnReconnectAttempt += OnReconnectAttempt;
+        }
+
+        private void UnsubscribeModbusBllEvents()
+        {
+            modbusBll.OnLogAdded -= AddLog;
+            modbusBll.OnDataUpdated -= UpdateModbusTable;
+            modbusBll.OnDataCleared -= ClearModbusTable;
+            modbusBll.OnDataReceived -= OnDataReceived;
+            modbusBll.OnBatchDataReceived -= OnBatchDataReceived;
+            modbusBll.OnWriteCompleted -= OnWriteCompleted;
+            modbusBll.OnModbusException -= OnModbusException;
+            modbusBll.OnReconnectAttempt -= OnReconnectAttempt;
+        }
+
+        private void OnModbusException(ModbusExceptionInfo ex)
+        {
+            if (ex.ExceptionType == ModbusExceptionType.BusinessException)
+            {
+                AddLog($"【业务异常-跳过重试】{ex.Message}（异常码：0x{ex.ExceptionCode:X2}）");
+                timerTimeOut.Stop();
+                timerAutoSend.Start();
+            }
+            else if (ex.ExceptionType == ModbusExceptionType.CommunicationException)
+            {
+                AddLog($"【通信异常-触发重连】{ex.Message}");
+                TryExponentialReconnect();
+            }
+        }
+
+        private void OnReconnectAttempt(int attempt)
+        {
+            int delay = modbusBll.GetExponentialBackoffDelay(attempt - 1);
+            AddLog($"【指数退避】第{attempt}次重连，等待{delay}ms");
         }
 
         // 批量数据接收事件处理
@@ -604,21 +637,40 @@ namespace ModbusRTU_TCP
                 AddLog("【重连】用户已主动关闭连接，取消自动重连");
                 return;
             }
-            try
-            {
-                AddLog("【重连】检测到设备断线，正在尝试恢复通信...");
-                modbusBll.CanSend = true;
-                modbusBll.StopRetry();
-                btnCloseSerial_Click(null, null);
+            TryExponentialReconnect();
+        }
 
-                System.Threading.Thread.Sleep(100);
-
-                btnOpenSerial_Click(null, null);
-            }
-            catch (Exception ex)
+        private void TryExponentialReconnect()
+        {
+            if (_isUserClosing)
             {
-                AddLog($"【重连失败】无法连接设备：{ex.Message}，将继续尝试重连");
+                AddLog("【重连】用户已主动关闭连接，取消指数退避重连");
+                return;
             }
+            if (modbusBll.IsReconnecting)
+            {
+                AddLog("【重连】已在重连中，跳过");
+                return;
+            }
+
+            modbusBll.StartExponentialReconnect(() =>
+            {
+                this.Invoke(new Action(() =>
+                {
+                    try
+                    {
+                        modbusBll.StopExponentialReconnect();
+                        modbusBll.CanSend = true;
+                        modbusBll.StopRetry();
+                        btnCloseSerial_Click(null, null);
+                        btnOpenSerial_Click(null, null);
+                    }
+                    catch (Exception ex)
+                    {
+                        AddLog($"【指数退避重连失败】{ex.Message}");
+                    }
+                }));
+            });
         }
 
         private bool IsDataValid() 

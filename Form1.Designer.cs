@@ -14,6 +14,7 @@ namespace ModbusRTU_TCP
             {
                 timerAutoSend?.Stop();
                 timerAutoSend?.Dispose();
+                UnsubscribeModbusBllEvents();
                 modbusBll?.Dispose();
             }
             base.Dispose(disposing);
