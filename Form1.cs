@@ -48,6 +48,8 @@ namespace ModbusRTU_TCP
             modbusBll.OnReconnectAttempt += OnReconnectAttempt;
         }
 
+        #region 新增 - 事件解绑与异常处理
+
         private void UnsubscribeModbusBllEvents()
         {
             modbusBll.OnLogAdded -= AddLog;
@@ -80,6 +82,8 @@ namespace ModbusRTU_TCP
             int delay = modbusBll.GetExponentialBackoffDelay(attempt - 1);
             AddLog($"【指数退避】第{attempt}次重连，等待{delay}ms");
         }
+
+        #endregion
 
         // 批量数据接收事件处理
         private void OnBatchDataReceived(ushort startAddr, ushort[] values)
@@ -640,6 +644,8 @@ namespace ModbusRTU_TCP
             TryExponentialReconnect();
         }
 
+        #region 新增 - 指数退避重连
+
         private void TryExponentialReconnect()
         {
             if (_isUserClosing)
@@ -672,6 +678,8 @@ namespace ModbusRTU_TCP
                 }));
             });
         }
+
+        #endregion
 
         private bool IsDataValid() 
         {

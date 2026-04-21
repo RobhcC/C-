@@ -15,6 +15,8 @@ namespace ModbusRTU_TCP.BLL
         Online       // 在线
     }
 
+    #region 新增 - 异常分类与信息封装
+
     // Modbus异常类型枚举
     public enum ModbusExceptionType
     {
@@ -37,6 +39,8 @@ namespace ModbusRTU_TCP.BLL
             Message = message;
         }
     }
+
+    #endregion
 
     // Modbus业务逻辑层 - 负责Modbus通信的核心业务逻辑处理
     // 包括串口通信、TCP通信、数据解析、超时重发、批量读写、指数退避重连、异常分类等功能
@@ -110,10 +114,15 @@ namespace ModbusRTU_TCP.BLL
         public event Action<ushort, ushort[]> OnBatchDataReceived;
         // 写入完成事件 - 当批量写入成功时触发
         public event Action<ushort, ushort> OnWriteCompleted;
+        
+        #region 新增 - 异常与重连事件
+        
         // Modbus异常事件 - 当发生业务异常或通信异常时触发
         public event Action<ModbusExceptionInfo> OnModbusException;
         // 重连尝试事件 - 当指数退避重连尝试时触发
         public event Action<int> OnReconnectAttempt;
+        
+        #endregion
         
         #endregion
 
@@ -952,6 +961,8 @@ namespace ModbusRTU_TCP.BLL
             _retryCount = 0;
         }
 
+        #region 新增 - 异常分类与指数退避重连
+
         // 触发通信异常（供外部调用）
         public void TriggerCommunicationException(string message)
         {
@@ -1026,7 +1037,9 @@ namespace ModbusRTU_TCP.BLL
             OnModbusException = null;
             OnReconnectAttempt = null;
         }
-        
+
+        #endregion
+
         #endregion
 
         #region 批量操作公共方法
