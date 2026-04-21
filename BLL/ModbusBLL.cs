@@ -775,6 +775,7 @@ namespace ModbusRTU_TCP.BLL
         {
             DataRecord record = new DataRecord(temp, humi, status);
             historyRecords.Add(record);
+            dataExportDAL.SaveRecordToSqlite(record);
 
             // 超过最大记录数时删除最早的记录
             if (historyRecords.Count > MaxRecordCount)
@@ -799,6 +800,48 @@ namespace ModbusRTU_TCP.BLL
         public async Task<bool> ExportToCsvAsync(string filePath)
         {
             return await dataExportDAL.ExportToCsvAsync(historyRecords, filePath);
+        }
+
+        // 从SQLite读取全部历史记录
+        public List<DataRecord> GetAllRecordsFromDb()
+        {
+            return dataExportDAL.GetAllRecordsFromSqlite();
+        }
+
+        // 按ID查询记录
+        public DataRecord GetRecordById(long id)
+        {
+            return dataExportDAL.GetRecordById(id);
+        }
+
+        // 按时间范围查询记录
+        public List<DataRecord> QueryRecordsByTimeRange(DateTime startTime, DateTime endTime)
+        {
+            return dataExportDAL.QueryRecordsByTimeRange(startTime, endTime);
+        }
+
+        // 更新指定记录
+        public bool UpdateRecord(DataRecord record)
+        {
+            return dataExportDAL.UpdateRecord(record);
+        }
+
+        // 按ID删除记录
+        public bool DeleteRecordById(long id)
+        {
+            return dataExportDAL.DeleteRecordById(id);
+        }
+
+        // 按时间范围删除记录
+        public int DeleteRecordsByTimeRange(DateTime startTime, DateTime endTime)
+        {
+            return dataExportDAL.DeleteRecordsByTimeRange(startTime, endTime);
+        }
+
+        // 清空数据库记录
+        public int ClearAllDbRecords()
+        {
+            return dataExportDAL.ClearAllRecords();
         }
         
         #endregion

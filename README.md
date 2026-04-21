@@ -1,5 +1,66 @@
 # ModbusRTU_TCP
 
+一个基于 WinForms 的 Modbus RTU/TCP 温湿度采集项目，支持实时读取、历史记录导出，并已接入 SQLite 本地数据库持久化。
+
+## 功能概览
+
+- 支持 `Modbus RTU` 与 `Modbus TCP` 两种通信方式
+- 支持批量读取与批量写入寄存器
+- 自动采集温湿度并进行状态判定（正常/高温预警/低温预警）
+- 支持历史数据导出为 `TXT` 与 `CSV`
+- 支持 SQLite 本地数据库 `CRUD`（增删改查）
+
+## SQLite 持久化说明
+
+项目运行后会自动在程序目录创建数据库文件：
+
+- `history.db`
+
+并自动创建表：
+
+- `DataRecords(Id, CollectTime, Temperature, Humidity, Status)`
+
+## 数据库 CRUD 接口
+
+### DAL 层（`DAL/DataExportDAL.cs`）
+
+- `SaveRecordToSqlite(DataRecord record)`：新增记录
+- `GetAllRecordsFromSqlite()`：查询全部记录（按时间倒序）
+- `GetRecordById(long id)`：按 ID 查询
+- `QueryRecordsByTimeRange(DateTime startTime, DateTime endTime)`：按时间范围查询
+- `UpdateRecord(DataRecord record)`：更新记录
+- `DeleteRecordById(long id)`：按 ID 删除
+- `DeleteRecordsByTimeRange(DateTime startTime, DateTime endTime)`：按时间范围删除
+- `ClearAllRecords()`：清空全部记录
+
+### BLL 层（`BLL/ModbusBLL.cs`）
+
+- `GetAllRecordsFromDb()`
+- `GetRecordById(long id)`
+- `QueryRecordsByTimeRange(DateTime startTime, DateTime endTime)`
+- `UpdateRecord(DataRecord record)`
+- `DeleteRecordById(long id)`
+- `DeleteRecordsByTimeRange(DateTime startTime, DateTime endTime)`
+- `ClearAllDbRecords()`
+
+> 说明：采集到新数据时，会在 `AddHistoryRecord(...)` 中自动写入 SQLite。
+
+## 依赖说明
+
+项目通过 `packages.config` 与 `csproj` 引用了 SQLite 依赖：
+
+- `System.Data.SQLite.Core (1.0.119.0)`
+- `Stub.System.Data.SQLite.Core.NetFramework (1.0.119.0)`
+
+首次打开项目请先进行 NuGet 还原。
+
+## 后续建议
+
+- 在 `Form1` 增加“历史记录查询/编辑/删除/清空”界面按钮，打通完整可视化 CRUD
+- 增加“按时间范围导出数据库记录”功能
+- 为数据库操作补充异常日志提示（而非静默失败）
+# ModbusRTU_TCP
+
 一个基于 C# Windows Forms 开发的 Modbus RTU/TCP 通信工具，支持温湿度数据采集、监控和导出功能。
 
 ## 功能特性
