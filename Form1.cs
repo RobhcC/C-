@@ -20,6 +20,7 @@ namespace ModbusRTU_TCP
         private System.Windows.Forms.Timer timerAutoSend;
         private bool isConnecting = false;
         private bool _isUserClosing = false;
+        private bool _isDbViewMode = false;
         
         // 当前生效的读取参数（点击批量读取按钮后才更新）
         private ushort _currentStartAddr = 0;
@@ -68,6 +69,10 @@ namespace ModbusRTU_TCP
         // 更新批量数据表格
         private void UpdateBatchDataTable(ushort startAddr, ushort[] values)
         {
+            if (_isDbViewMode)
+            {
+                InitModbusTable();
+            }
             // 清空现有行
             dgvModbus.Rows.Clear();
             
@@ -205,6 +210,7 @@ namespace ModbusRTU_TCP
         //表格初始化
         private void InitModbusTable()
         {
+            _isDbViewMode = false;
             dgvModbus.Columns.Clear();
             dgvModbus.Rows.Clear();
 
@@ -233,6 +239,34 @@ namespace ModbusRTU_TCP
                 dgvModbus.RowTemplate.Height = row_height;
             }
         }
+
+        private void ShowDbRecords(List<DataRecord> records)
+        {
+            _isDbViewMode = true;
+            dgvModbus.Columns.Clear();
+            dgvModbus.Rows.Clear();
+            dgvModbus.ReadOnly = true;
+
+            dgvModbus.Columns.Add("Id", "ID");
+            dgvModbus.Columns.Add("CollectTime", "采集时间");
+            dgvModbus.Columns.Add("Temperature", "温度(℃)");
+            dgvModbus.Columns.Add("Humidity", "湿度(%)");
+            dgvModbus.Columns.Add("Status", "状态");
+
+            foreach (var record in records)
+            {
+                dgvModbus.Rows.Add(
+                    record.Id,
+                    record.CollectTime.ToString("yyyy-MM-dd HH:mm:ss"),
+                    record.Temperature.ToString("0.0"),
+                    record.Humidity.ToString("0.0"),
+                    record.Status
+                );
+            }
+
+            dgvModbus.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+            AddLog($"【数据库】已加载 {records.Count} 条记录");
+        }
         //更新表格数据
         private void UpdateModbusTable(double temp, double humi, string status, Color color)
         {
@@ -240,6 +274,10 @@ namespace ModbusRTU_TCP
             {
                 dgvModbus.Invoke(new Action(() => UpdateModbusTable(temp, humi, status, color)));
                 return;
+            }
+            if (_isDbViewMode || !dgvModbus.Columns.Contains("Value"))
+            {
+                InitModbusTable();
             }
             if (dgvModbus.Rows.Count < 3) return;
             dgvModbus.Rows[0].Cells["Value"].Value = temp.ToString("0.0");
@@ -256,6 +294,10 @@ namespace ModbusRTU_TCP
             {
                 dgvModbus.Invoke(new Action(() => ClearModbusTable()));
                 return;
+            }
+            if (_isDbViewMode || !dgvModbus.Columns.Contains("Value"))
+            {
+                InitModbusTable();
             }
             if (dgvModbus.Rows.Count < 3) return;
             dgvModbus.Rows[0].Cells["Value"].Value = "--";
@@ -581,6 +623,7 @@ namespace ModbusRTU_TCP
 
         private bool IsDataValid() 
         {
+            if (_isDbViewMode) return false;
             try
             {
                 string temp = dgvModbus.Rows[0].Cells["Value"].Value.ToString();
@@ -675,6 +718,201 @@ namespace ModbusRTU_TCP
             catch (Exception ex)
             {
                 AddLog($"【导出失败】CSV：{ex.Message}");
+            }
+        }
+
+        private void btnDbQuery_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                var records = modbusBll.GetAllRecordsFromDb();
+                ShowDbRecords(records);
+            }
+            catch (Exception ex)
+            {
+                AddLog($"【数据库查询失败】{ex.Message}");
+            }
+        }
+
+        private void btnDbCreate_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                string tempInput = ShowInputDialog("新增记录", "请输入温度(℃)：", "25.0");
+                if (tempInput == null) return;
+                string humiInput = ShowInputDialog("新增记录", "请输入湿度(%)：", "50.0");
+                if (humiInput == null) return;
+                string statusInput = ShowInputDialog("新增记录", "请输入状态：", "正常");
+                if (statusInput == null) return;
+
+                if (!double.TryParse(tempInput, out double temp) || !double.TryParse(humiInput, out double humi))
+                {
+                    AddLog("【数据库新增失败】温湿度格式无效");
+                    return;
+                }
+
+                DataRecord record = new DataRecord(temp, humi, string.IsNullOrWhiteSpace(statusInput) ? "正常" : statusInput);
+                if (modbusBll.AddRecordToDb(record))
+                {
+                    AddLog($"【数据库新增成功】ID：{record.Id}");
+                    ShowDbRecords(modbusBll.GetAllRecordsFromDb());
+                }
+                else
+                {
+                    AddLog("【数据库新增失败】写入数据库失败");
+                }
+            }
+            catch (Exception ex)
+            {
+                AddLog($"【数据库新增异常】{ex.Message}");
+            }
+        }
+
+        private void btnDbUpdate_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                string idInput = ShowInputDialog("修改记录", "请输入要修改的记录ID：", "");
+                if (idInput == null) return;
+                if (!long.TryParse(idInput, out long id) || id <= 0)
+                {
+                    AddLog("【数据库修改失败】ID格式无效");
+                    return;
+                }
+
+                DataRecord record = modbusBll.GetRecordById(id);
+                if (record == null)
+                {
+                    AddLog($"【数据库修改失败】未找到ID={id}的记录");
+                    return;
+                }
+
+                string tempInput = ShowInputDialog("修改记录", "温度(℃)：", record.Temperature.ToString("0.0"));
+                if (tempInput == null) return;
+                string humiInput = ShowInputDialog("修改记录", "湿度(%)：", record.Humidity.ToString("0.0"));
+                if (humiInput == null) return;
+                string statusInput = ShowInputDialog("修改记录", "状态：", record.Status);
+                if (statusInput == null) return;
+
+                if (!double.TryParse(tempInput, out double temp) || !double.TryParse(humiInput, out double humi))
+                {
+                    AddLog("【数据库修改失败】温湿度格式无效");
+                    return;
+                }
+
+                record.Temperature = temp;
+                record.Humidity = humi;
+                record.Status = string.IsNullOrWhiteSpace(statusInput) ? "正常" : statusInput;
+                if (modbusBll.UpdateRecord(record))
+                {
+                    AddLog($"【数据库修改成功】ID：{id}");
+                    ShowDbRecords(modbusBll.GetAllRecordsFromDb());
+                }
+                else
+                {
+                    AddLog("【数据库修改失败】更新失败");
+                }
+            }
+            catch (Exception ex)
+            {
+                AddLog($"【数据库修改异常】{ex.Message}");
+            }
+        }
+
+        private void btnDbDelete_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                string idInput = ShowInputDialog("删除记录", "请输入要删除的记录ID：", "");
+                if (idInput == null) return;
+                if (!long.TryParse(idInput, out long id) || id <= 0)
+                {
+                    AddLog("【数据库删除失败】ID格式无效");
+                    return;
+                }
+
+                if (modbusBll.DeleteRecordById(id))
+                {
+                    AddLog($"【数据库删除成功】ID：{id}");
+                    ShowDbRecords(modbusBll.GetAllRecordsFromDb());
+                }
+                else
+                {
+                    AddLog($"【数据库删除失败】未找到ID={id}或删除失败");
+                }
+            }
+            catch (Exception ex)
+            {
+                AddLog($"【数据库删除异常】{ex.Message}");
+            }
+        }
+
+        private void btnDbClear_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                DialogResult result = MessageBox.Show("确定清空数据库全部历史记录吗？", "确认清空", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                if (result != DialogResult.Yes)
+                {
+                    AddLog("【数据库清空取消】用户取消操作");
+                    return;
+                }
+
+                int affected = modbusBll.ClearAllDbRecords();
+                AddLog($"【数据库清空完成】删除 {affected} 条记录");
+                ShowDbRecords(modbusBll.GetAllRecordsFromDb());
+            }
+            catch (Exception ex)
+            {
+                AddLog($"【数据库清空异常】{ex.Message}");
+            }
+        }
+
+        private string ShowInputDialog(string title, string prompt, string defaultValue)
+        {
+            using (Form form = new Form())
+            using (Label label = new Label())
+            using (TextBox textBox = new TextBox())
+            using (Button buttonOk = new Button())
+            using (Button buttonCancel = new Button())
+            {
+                form.Text = title;
+                form.StartPosition = FormStartPosition.CenterParent;
+                form.FormBorderStyle = FormBorderStyle.FixedDialog;
+                form.MinimizeBox = false;
+                form.MaximizeBox = false;
+                form.ClientSize = new Size(360, 130);
+
+                label.Text = prompt;
+                label.Left = 10;
+                label.Top = 12;
+                label.Width = 330;
+
+                textBox.Left = 10;
+                textBox.Top = 35;
+                textBox.Width = 330;
+                textBox.Text = defaultValue ?? string.Empty;
+
+                buttonOk.Text = "确定";
+                buttonOk.DialogResult = DialogResult.OK;
+                buttonOk.Left = 184;
+                buttonOk.Top = 80;
+                buttonOk.Width = 75;
+
+                buttonCancel.Text = "取消";
+                buttonCancel.DialogResult = DialogResult.Cancel;
+                buttonCancel.Left = 265;
+                buttonCancel.Top = 80;
+                buttonCancel.Width = 75;
+
+                form.Controls.Add(label);
+                form.Controls.Add(textBox);
+                form.Controls.Add(buttonOk);
+                form.Controls.Add(buttonCancel);
+                form.AcceptButton = buttonOk;
+                form.CancelButton = buttonCancel;
+
+                return form.ShowDialog(this) == DialogResult.OK ? textBox.Text : null;
             }
         }
 

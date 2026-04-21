@@ -802,6 +802,12 @@ namespace ModbusRTU_TCP.BLL
             return await dataExportDAL.ExportToCsvAsync(historyRecords, filePath);
         }
 
+        // 手动新增一条数据库记录
+        public bool AddRecordToDb(DataRecord record)
+        {
+            return dataExportDAL.SaveRecordToSqlite(record);
+        }
+
         // 从SQLite读取全部历史记录
         public List<DataRecord> GetAllRecordsFromDb()
         {
